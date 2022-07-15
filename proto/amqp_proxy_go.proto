@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+option go_package = "./;AmqpProxy";
+
+package AmqpProxy;
+
+
+service consumer {
+  rpc do (Params) returns (Reply) {}
+}
+
+//请求参数
+message Params {
+  string class = 1; //指定类
+  string func = 2; //指定方法
+  string args = 3; //参数
+}
+
+message Reply {
+  bool success = 1;
+  string message = 2;
+}
