@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+option go_package = "./;RemoteProxy";
+
+package RemoteProxy;
+
+
+service Consumer {
+  rpc work (Params) returns (Reply) {}
+}
+
+service Producer {
+  rpc push (Params) returns (Reply) {}
+}
+
+//请求参数
+message Params {
+  string class = 1; //指定类
+  string func = 2; //指定方法
+  string args = 3; //参数
+  string path = 4; //执行位置
+  string hostname = 5; //消费者服务端口
+  int32 delay = 6; //延迟消费时间
+  int64 qid = 7; //请求id
+}
+
+message Reply {
+  bool success = 1;
+  string message = 2;
+  int64 rid = 3;
+}

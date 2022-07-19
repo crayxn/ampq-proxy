@@ -1,7 +1,7 @@
 package main
 
 import (
-	AmqpProxy "amqp-proxy/proto"
+	RemoteProxy "amqp-proxy/proto"
 	"flag"
 	"fmt"
 	"golang.org/x/net/context"
@@ -21,9 +21,10 @@ func (s *server) mustEmbedUnimplementedConsumerServer() {
 }
 
 var phpPath string
-var artisanPath string
-var artisanCommand string
+var artisanCommand = "kyy:proxy"
 var logger int
+var ipv4 string
+var port string
 
 func logConsole(format string, v ...any) {
 	if logger == 1 {
@@ -31,29 +32,22 @@ func logConsole(format string, v ...any) {
 	}
 }
 
-func (s *server) Do(ctx context.Context, params *AmqpProxy.Params) (*AmqpProxy.Reply, error) {
-
-	logConsole("%s %s %s %s %s %s", phpPath, artisanPath, artisanCommand, params.GetClass(), params.GetFunc(), params.GetArgs())
-	cmd := exec.Command(phpPath, artisanPath, artisanCommand, params.GetClass(), params.GetFunc(), "--args="+params.GetArgs())
-	out, err := cmd.CombinedOutput()
-	logConsole("combined out:\n%s\n", string(out))
-	if err != nil {
+func (s *server) Work(ctx context.Context, params *RemoteProxy.Params) (*RemoteProxy.Reply, error) {
+	logConsole("%s %s/artisan %s %s %s %s", phpPath, params.GetPath(), artisanCommand, params.GetClass(), params.GetFunc(), params.GetArgs())
+	go func() {
+		cmd := exec.Command(phpPath, params.GetPath()+"/artisan", artisanCommand, params.GetClass(), params.GetFunc(), "--args="+params.GetArgs())
+		out, _ := cmd.CombinedOutput()
 		logConsole("combined out:\n%s\n", string(out))
-		return &AmqpProxy.Reply{Success: false, Message: fmt.Sprintf("执行错误,请检查命令 %s -> %s(%s)", params.GetClass(), params.GetFunc(), params.GetArgs())}, nil
-	}
-	if string(out) != "success" {
-		return &AmqpProxy.Reply{Success: false, Message: string(out)}, nil
-	}
-	return &AmqpProxy.Reply{Success: true, Message: ""}, nil
+	}()
+	return &RemoteProxy.Reply{Success: true, Message: ""}, nil
 }
 
-func getClientIp() (string, error) {
-	adds, err := net.InterfaceAddrs()
-
-	if err != nil {
-		return "", err
-	}
+func getClientIp() string {
 	host := "0.0.0.0"
+	adds, err := net.InterfaceAddrs()
+	if err != nil {
+		return host
+	}
 	for _, address := range adds {
 		// 检查ip地址判断是否回环地址
 		if ip, ok := address.(*net.IPNet); ok && !ip.IP.IsLoopback() {
@@ -63,24 +57,18 @@ func getClientIp() (string, error) {
 
 		}
 	}
-
-	return host, nil
-
+	return host
 }
 
 func main() {
 	//注册参数
-	flag.StringVar(&phpPath, "php", "php", "php位置，默认环境中php")
-	flag.StringVar(&artisanPath, "artisan", "../../../artisan", "artisan位置，默认../../../artisan")
-	flag.StringVar(&artisanCommand, "command", "kyy:proxy", "执行命令，默认 kyy:proxy")
-	flag.IntVar(&logger, "log", 0, "是否打印日志 1打印")
+	flag.StringVar(&phpPath, "php", "php", "PHP位置")
+	flag.IntVar(&logger, "log", 0, "是否打印日志,1打印")
+	flag.StringVar(&ipv4, "ip", getClientIp(), "服务IP地址，默认本地IP")
+	flag.StringVar(&port, "port", "0", "服务端口，默认随机")
 	flag.Parse()
-	//获取闲置端口
-	ip, err := getClientIp()
-	if err != nil {
-		panic(err)
-	}
-	address, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:0", ip))
+	//启动服务
+	address, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%s", ipv4, port))
 	if err != nil {
 		panic(err)
 	}
@@ -88,7 +76,12 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer lis.Close()
+	defer func(lis *net.TCPListener) {
+		err := lis.Close()
+		if err != nil {
+			panic(err)
+		}
+	}(lis)
 
 	//写入配置文件
 	if err := ioutil.WriteFile("proxy.php", []byte("<?php return [\"host\"=>\""+lis.Addr().String()+"\"];"), 0644); err != nil {
@@ -99,15 +92,15 @@ func main() {
 	s := grpc.NewServer()
 
 	// 注册Greeter服务
-	AmqpProxy.RegisterConsumerServer(s, &server{})
+	RemoteProxy.RegisterConsumerServer(s, &server{})
 
 	// 往grpc服务端注册反射服务
 	reflection.Register(s)
+
+	log.Printf("\n+---------KYY-PROXY---------\n| [host  ] %s\n| [server] running...\n+---------------------------", lis.Addr().String())
 
 	// 启动grpc服务
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}
-
-	log.Println("server running")
 }
